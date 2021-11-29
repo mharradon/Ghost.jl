@@ -158,12 +158,11 @@ function loop5(a, n)
     return a
 end
 
-function loop6(n)
-    a = 0
+function loop6(a, n)
     i = 1
     while true
         a += i
-        if i > n
+        if a > n
             break
         end
     end
@@ -225,9 +224,11 @@ end
 
     # Test with fixed boolean condition
     # Currently broken
-    _, tape = trace(loop6, 3)
-    @test play!(tape, loop6, 3) == loop6(3)
-    @test compile!(tape, loop6, 3) == loop6(3)
+    v, tape = trace(loop6, 0, 3)
+    println((tape, v))
+    @test v == loop6(0, 3)
+    @test play!(tape, loop6, 0, 3) == loop6(0, 3)
+    @test compile(tape, loop6, 0, 3) == loop6(0, 3)
 
     should_trace_loops!()
 end

@@ -389,7 +389,7 @@ See the online documentation for details.
 mutable struct Loop <: AbstractOp
     id::Int
     parent_inputs::Vector{Variable}
-    condition::Variable
+    condition::Union{Variable, Bool}
     cont_vars::Vector{Variable}
     exit_vars::Vector{Variable}
     subtape::Tape

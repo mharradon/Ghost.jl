@@ -128,7 +128,7 @@ mutable struct IRTracer
     tape::Tape
     frames::Vector{Frame}
     options::TracerOptions
-    last_block::Union{V, Nothing}
+    last_block_jmp_target::Union{V, Nothing}
 end
 
 function IRTracer(; ctx=Dict(), is_primitive=is_chainrules_primitive)
@@ -176,8 +176,8 @@ end
 function pop_frame!(t::IRTracer, res_sid::Int)
     frame = pop!(t.frames)
     # create mapping from the current SSA ID to the last instruction on the tape
-    t.frames[end].ir2tape[res_sid] =
-        (frame.result.id == 0 ? bound(t.tape, V(length(t.tape))) : frame.result)
+    res = (frame.result.id == 0 ? bound(t.tape, V(length(t.tape))) : frame.result)
+    t.frames[end].ir2tape[res_sid] = res
 end
 
 
@@ -205,18 +205,18 @@ end
 
 function check_and_set_branch!(t::IRTracer, condition, block)
     condition = get_tape_vars(t, [condition[]])[1]
-    t.last_block = push!(t.tape, mkcall(_check_and_set_branch!, condition, block, t.last_block))
+    t.last_block_jmp_target = push!(t.tape, mkcall(_check_and_set_branch!, condition, block, t.last_block_jmp_target))
 end
-function _check_and_set_branch!(condition, block, last_block)
-    if last_block == nothing && (condition == nothing || condition == false)
+function _check_and_set_branch!(condition, block, last_block_jmp_target)
+    if last_block_jmp_target == nothing && (condition == nothing || condition == false)
         return block
     else
-        return last_block
+        return last_block_jmp_target
     end
 end
 
 function check_block(t::IRTracer, block_id)
-    t.last_block = push!(t.tape, mkcall(_check_block, block_id, t.last_block))
+    t.last_block_jmp_target = push!(t.tape, mkcall(_check_block, block_id, t.last_block_jmp_target))
 end
 function _check_block(block_id, next_block)
     @assert next_block !== nothing ? next_block == block_id : true
@@ -289,7 +289,7 @@ end
 
 function loop_condition_ir_id(block::IRTools.Block)
     br = loop_exit_branch(block)
-    return br !== nothing ? br.condition.id : nothing
+    return br !== nothing ? (br.condition isa Bool ? br.condition : br.condition.id) : nothing
 end
 
 
@@ -361,7 +361,11 @@ function enter_loop!(t::IRTracer, loop_id, loop_input_ir_ids::Vector)
     # record inputs to the subtape & populate the new frame's ir2tape
     for ir_id in loop_input_ir_ids
         parent_tape_var = t.frames[end - 1].ir2tape[ir_id]
-        val = subtape.parent[parent_tape_var].val
+        if parent_tape_var isa V
+            val = subtape.parent[parent_tape_var].val
+        else
+            val = parent_tape_var
+        end
         tape_var = push!(subtape, Input(val))
         t.frames[end].ir2tape[ir_id] = tape_var
     end
@@ -386,7 +390,7 @@ function stop_loop_tracing!(t::IRTracer,
         # we will use them later
         t.tape.meta[LOOP_EXIT_TAPE_IDS] =
             [t.frames[end].ir2tape[ir_id] for ir_id in exit_ir_ids]
-        t.tape.meta[LOOP_COND_ID] = t.frames[end].ir2tape[cond_ir_id]
+        t.tape.meta[LOOP_COND_ID] = cond_ir_id isa Bool ? cond_ir_id : t.frames[end].ir2tape[cond_ir_id]
         t.tape.meta[LOOP_CONTINUE_TAPE_IDS] =
             [t.frames[end].ir2tape[ir_id] for ir_id in cont_ir_ids]
         # set flag to stop creatnig new subtapes
@@ -416,8 +420,8 @@ function exit_loop!(t::IRTracer,
     # loop subtape already contains a variable designating condition
     # of loop continuation; if this condition is false,
     # we are ready to exit the loop and record Loop operation
-    cond_op = t.tape[t.frames[end].ir2tape[cond_ir_id]]
-    if !cond_op.val
+    cond_op_val = cond_ir_id isa Bool ? !cond_ir_id : !t.tape[t.frames[end].ir2tape[cond_ir_id]].val
+    if cond_op_val
         # swap active tape back
         pop!(t.frames)
         parent_ir2tape = t.frames[end].ir2tape
